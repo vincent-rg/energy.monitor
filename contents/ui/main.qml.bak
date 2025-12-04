@@ -1,0 +1,288 @@
+/*
+ * Copyright 2021 Martin Krcma <martin.krcma1@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http: //www.gnu.org/licenses/>.
+ *
+ */
+import QtQuick 2.7
+import org.kde.plasma.plasmoid 2.0
+import org.kde.plasma.core 2.0 as PlasmaCore
+import QtQuick.Layouts 1.1
+import QtQuick.Controls 1.1
+
+Item {
+    id: main
+    anchors.fill: parent
+    Layout.preferredWidth: 400 * units.devicePixelRatio
+    Layout.preferredHeight: 300 * units.devicePixelRatio
+    Plasmoid.preferredRepresentation: Plasmoid.compactRepresentation
+
+    // Battery state management - moved to main item
+    property var batteryList: []
+    property bool batteriesDiscovered: false
+    property double currentPower: 0.0
+    property bool debug: false  // Set to true when debugging
+
+    // Power management data source - moved to main item
+    property QtObject pmSource: PlasmaCore.DataSource {
+        id: pmSource
+        engine: "powermanagement"
+        connectedSources: ["Battery", "AC Adapter"]
+        interval: 1000
+    }
+
+    property bool isOnBattery: pmSource.data["AC Adapter"] &&
+                               pmSource.data["AC Adapter"]["Plugged in"] === false
+
+    // DataEngine for executing shell commands
+    PlasmaCore.DataSource {
+        id: executable
+        engine: "executable"
+        connectedSources: []
+
+        onNewData: {
+            var stdout = data["stdout"]
+
+            if (sourceName.indexOf("battery_discover") !== -1) {
+                handleBatteryDiscovery(stdout)
+            } else if (sourceName.indexOf("battery_power") !== -1) {
+                handleBatteryPower(stdout)
+            }
+
+            disconnectSource(sourceName)
+        }
+
+        function exec(cmd) {
+            connectSource(cmd)
+        }
+    }
+
+    // Update timer - moved to main item
+    Timer {
+        id: updateTimer
+        interval: 2000
+        repeat: true
+        running: true
+        triggeredOnStart: false  // Don't trigger immediately
+        onTriggered: {
+            main.updatePowerUsage()
+        }
+    }
+
+    // Discover batteries on startup
+    Component.onCompleted: {
+        discoverBatteries()
+    }
+
+    function discoverBatteries() {
+        var cmd = "battery_discover|"
+        for (var i = 0; i < 4; i++) {
+            cmd += "if [ -f /sys/class/power_supply/BAT" + i + "/present ]; then "
+            cmd += "present=$(cat /sys/class/power_supply/BAT" + i + "/present 2>/dev/null); "
+            cmd += "if [ \"$present\" = \"1\" ]; then "
+            cmd += "echo -n 'BAT" + i + "'; "
+            cmd += "if [ -f /sys/class/power_supply/BAT" + i + "/power_now ]; then "
+            cmd += "echo ':power_now'; "
+            cmd += "else echo ':current_voltage'; fi; "
+            cmd += "fi; fi; "
+        }
+        executable.exec(cmd)
+    }
+
+    function handleBatteryDiscovery(stdout) {
+        batteryList = []
+        var lines = stdout.trim().split('\n')
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim()
+            if (line === "") continue
+
+            var parts = line.split(':')
+            if (parts.length === 2) {
+                var battery = {
+                    name: parts[0],
+                    url: "/sys/class/power_supply/" + parts[0],
+                    powerNowExists: parts[1] === "power_now"
+                }
+                batteryList.push(battery)
+            }
+        }
+
+        batteriesDiscovered = true
+        if (debug) console.log("Batteries discovered:", batteryList.length)
+
+        // Start updating power after discovery
+        if (batteryList.length > 0) {
+            updatePowerUsage()
+            updateTimer.start()
+        }
+    }
+
+    function updatePowerUsage() {
+        if (!batteriesDiscovered || batteryList.length === 0) {
+            currentPower = 0.0
+            return
+        }
+
+        var cmd = "battery_power|"
+        for (var i = 0; i < batteryList.length; i++) {
+            var battery = batteryList[i]
+            if (battery.powerNowExists) {
+                cmd += "power=$(cat " + battery.url + "/power_now 2>/dev/null || echo '0'); "
+                cmd += "echo \"" + battery.name + ":$power\"; "
+            } else {
+                // Use command substitution directly in echo
+                cmd += "echo \"" + battery.name + ":$(cat " + battery.url + "/current_now 2>/dev/null || echo '0'):$(cat " + battery.url + "/voltage_now 2>/dev/null || echo '0')\"; "
+            }
+        }
+        executable.exec(cmd)
+    }
+
+    function safeParseInt(value) {
+        if (!value || value === "" || value === "0") {
+            return 0
+        }
+        var parsed = parseInt(value)
+        return isNaN(parsed) ? 0 : parsed
+    }
+
+    function handleBatteryPower(stdout) {
+        var totalPower = 0.0
+        var lines = stdout.trim().split('\n')
+
+        if (debug) console.log("Battery power output:", stdout)
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim()
+            if (line === "") continue
+
+            var parts = line.split(':')
+            if (parts.length === 2) {
+                // power_now format
+                if (debug) console.log("power=", parts[1])
+                var powerValue = safeParseInt(parts[1])
+                if (powerValue > 0) {
+                    var power = powerValue / 1000000.0
+                    totalPower += Math.round(power * 10) / 10
+                }
+            } else if (parts.length === 3) {
+                // current:voltage format
+                if (debug) console.log("current='", parts[1], "' voltage='", parts[2], "'")
+                var current = safeParseInt(parts[1])
+                var voltage = safeParseInt(parts[2])
+                if (current > 0 && voltage > 0) {
+                    var power = (current * voltage) / 1000000000000.0
+                    totalPower += Math.round(power * 10) / 10
+                }
+            }
+        }
+
+        if (debug) console.log("Total power calculated:", totalPower)
+        currentPower = totalPower
+    }
+
+    // compact representation
+    Plasmoid.compactRepresentation: Label {
+        id: label1
+        Plasmoid.backgroundHints: PlasmaCore.Types.ShadowBackground | PlasmaCore.Types.ConfigurableBackground
+        anchors {
+            fill: parent
+            margins: Math.round(parent.width * 0.01)
+        }
+        verticalAlignment: Text.AlignVCenter
+        horizontalAlignment: Text.AlignRight
+
+        // Display the power value from main with validation
+        text: {
+            if (isNaN(main.currentPower)) {
+                return "0.0 W"
+            }
+            return main.currentPower.toFixed(1) + " W"
+        }
+        color: main.isOnBattery ? "#FFA0A0" : "#80FF80"
+
+        // Use a fixed font size based on widget height
+        font.pixelSize: Math.min(parent.height * 0.9, parent.width * 0.3)
+        fontSizeMode: Text.FixedSize
+        font.bold: true
+
+        // Mouse area for expanding
+        MouseArea {
+            id: mouseArea
+            anchors.fill: parent
+            onClicked: plasmoid.expanded = !plasmoid.expanded
+            hoverEnabled: true
+        }
+
+        // Tooltip
+        PlasmaCore.ToolTipArea {
+            anchors.fill: parent
+            mainText: "Energy monitor"
+            subText: {
+                if (isNaN(main.currentPower)) {
+                    return "0.0 W"
+                }
+                return main.currentPower.toFixed(1) + " W"
+            }
+        }
+    }
+
+    // full representation - simple placeholder
+    Plasmoid.fullRepresentation: Item {
+        Layout.preferredWidth: 400 * units.devicePixelRatio
+        Layout.preferredHeight: 300 * units.devicePixelRatio
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 10
+
+            Label {
+                text: "Energy Monitor"
+                font.bold: true
+                font.pointSize: 14
+            }
+
+            Label {
+                text: "Current Power Usage:"
+                font.pointSize: 12
+            }
+
+            Label {
+                text: {
+                    if (isNaN(main.currentPower)) {
+                        return "0.0 W"
+                    }
+                    return main.currentPower.toFixed(1) + " W"
+                }
+                font.pointSize: 24
+                font.bold: true
+                color: main.isOnBattery ? "#FFA0A0" : "#80FF80"
+            }
+
+            Label {
+                text: main.isOnBattery ? "On Battery" : "Plugged In"
+                font.pointSize: 12
+            }
+
+            Label {
+                text: "Batteries detected: " + main.batteryList.length
+                font.pointSize: 10
+            }
+
+            Item {
+                Layout.fillHeight: true
+            }
+        }
+    }
+}
