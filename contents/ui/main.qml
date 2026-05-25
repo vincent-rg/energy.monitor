@@ -15,19 +15,20 @@
  * along with this program.  If not, see <http: //www.gnu.org/licenses/>.
  *
  */
-import QtQuick 2.7
-import org.kde.plasma.plasmoid 2.0
-import org.kde.plasma.core 2.0 as PlasmaCore
-import QtQuick.Layouts 1.1
-import QtQuick.Controls 1.1
+import QtQuick 2.15
+import org.kde.plasma.plasmoid
+import org.kde.plasma.plasma5support as P5Support
+import QtQuick.Layouts 1.15
+import QtQuick.Controls 2.15 as Controls
+import org.kde.plasma.components as PlasmaComponents3
+import org.kde.kirigami as Kirigami
 
-Item {
+PlasmoidItem {
     id: main
-    anchors.fill: parent
-    Layout.preferredWidth: 800 * units.devicePixelRatio
-    Layout.minimumWidth: 400 * units.devicePixelRatio
-    Layout.preferredHeight: 300 * units.devicePixelRatio
-    Plasmoid.preferredRepresentation: Plasmoid.compactRepresentation
+    preferredRepresentation: compactRepresentation
+    Layout.preferredWidth: 800 * Kirigami.Units.devicePixelRatio
+    Layout.minimumWidth: 400 * Kirigami.Units.devicePixelRatio
+    Layout.preferredHeight: 300 * Kirigami.Units.devicePixelRatio
 
     // Battery state management - moved to main item
     property var batteryList: []
@@ -44,7 +45,7 @@ Item {
     property bool previousBatteryState: false  // Track previous charging state
 
     // Power management data source - moved to main item
-    property QtObject pmSource: PlasmaCore.DataSource {
+    property QtObject pmSource: P5Support.DataSource {
         id: pmSource
         engine: "powermanagement"
         connectedSources: ["Battery", "AC Adapter"]
@@ -55,7 +56,7 @@ Item {
                                pmSource.data["AC Adapter"]["Plugged in"] === false
 
     // DataEngine for executing shell commands
-    PlasmaCore.DataSource {
+    P5Support.DataSource {
         id: executable
         engine: "executable"
         connectedSources: []
@@ -294,14 +295,13 @@ Item {
     }
 
     // compact representation
-    Plasmoid.compactRepresentation: Item {
+    compactRepresentation: Item {
         Layout.minimumWidth: 90
         Layout.preferredWidth: 110
         Layout.fillHeight: true
         
-        Label {
+        PlasmaComponents3.Label {
             id: label1
-            Plasmoid.backgroundHints: PlasmaCore.Types.ShadowBackground | PlasmaCore.Types.ConfigurableBackground
             anchors {
                 fill: parent
                 margins: Math.round(parent.width * 0.01)
@@ -309,7 +309,6 @@ Item {
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignHCenter
 
-            // Display on two lines: power (avg) on first line, percentage and time on second
             text: {
                 var powerStr = isNaN(main.currentPower) ? "--" : main.currentPower.toFixed(1)
                 var avgStr = isNaN(main.averagePower) ? "--" : main.averagePower.toFixed(1)
@@ -318,56 +317,52 @@ Item {
             }
             color: main.isOnBattery ? "#FFFFFF" : "#80FF80"
 
-            // Use a smaller font size
             font.pixelSize: parent.height * 0.45
             fontSizeMode: Text.FixedSize
             font.bold: false
             lineHeight: 0.75
             lineHeightMode: Text.ProportionalHeight
 
-            // Mouse area for expanding
             MouseArea {
                 id: mouseArea
                 anchors.fill: parent
                 onClicked: plasmoid.expanded = !plasmoid.expanded
                 hoverEnabled: true
-            }
 
-            // Tooltip
-            PlasmaCore.ToolTipArea {
-                anchors.fill: parent
-                mainText: "Energy monitor"
-                subText: {
-                    var powerStr = isNaN(main.currentPower) ? "--" : main.currentPower.toFixed(1)
-                    var percentStr = (main.batteryPercentage < 0) ? "--" : main.batteryPercentage.toFixed(1)
-                    var avgStr = isNaN(main.averagePower) ? "--" : main.averagePower.toFixed(1)
-                    return powerStr + "W (avg: " + avgStr + "W) | " + percentStr + "% | " + main.timeRemaining
+                Controls.ToolTip {
+                    visible: parent.containsMouse
+                    text: {
+                        var powerStr = isNaN(main.currentPower) ? "--" : main.currentPower.toFixed(1)
+                        var percentStr = (main.batteryPercentage < 0) ? "--" : main.batteryPercentage.toFixed(1)
+                        var avgStr = isNaN(main.averagePower) ? "--" : main.averagePower.toFixed(1)
+                        return "Energy monitor\n" + powerStr + "W (avg: " + avgStr + "W) | " + percentStr + "% | " + main.timeRemaining
+                    }
                 }
             }
         }
     }
 
     // full representation - simple placeholder
-    Plasmoid.fullRepresentation: Item {
-        Layout.preferredWidth: 400 * units.devicePixelRatio
-        Layout.preferredHeight: 300 * units.devicePixelRatio
+    fullRepresentation: Item {
+        Layout.preferredWidth: 400 * Kirigami.Units.devicePixelRatio
+        Layout.preferredHeight: 300 * Kirigami.Units.devicePixelRatio
 
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 10
 
-            Label {
+            PlasmaComponents3.Label {
                 text: "Energy Monitor"
                 font.bold: true
                 font.pointSize: 14
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: "Current Power Usage:"
                 font.pointSize: 12
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: {
                     if (isNaN(main.currentPower)) {
                         return "-- W"
@@ -379,12 +374,12 @@ Item {
                 color: main.isOnBattery ? "#FFFFFF" : "#80FF80"
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: "Average Power (60s):"
                 font.pointSize: 12
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: {
                     if (isNaN(main.averagePower)) {
                         return "-- W"
@@ -395,12 +390,12 @@ Item {
                 font.bold: true
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: "Battery Level:"
                 font.pointSize: 12
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: {
                     if (main.batteryPercentage < 0) {
                         return "--%"
@@ -411,12 +406,12 @@ Item {
                 font.bold: true
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: "Time Remaining:"
                 font.pointSize: 12
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: {
                     var status = main.isOnBattery ? "to 0%" : "to 100%"
                     return main.timeRemaining + " " + status
@@ -425,12 +420,12 @@ Item {
                 font.bold: true
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: main.isOnBattery ? "On Battery" : "Plugged In"
                 font.pointSize: 12
             }
 
-            Label {
+            PlasmaComponents3.Label {
                 text: "Batteries detected: " + main.batteryList.length
                 font.pointSize: 10
             }
